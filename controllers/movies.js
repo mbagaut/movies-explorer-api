@@ -1,7 +1,6 @@
 const Movie = require('../models/movie');
 const NotFoundError = require('../errors/not-found-error');
 const BadRequestError = require('../errors/bad-request-error');
-const InternalServerError = require('../errors/internal-server-error');
 const ForbiddenError = require('../errors/forbidden-error');
 
 const saveMovie = (req, res, next) => {
@@ -34,20 +33,20 @@ const saveMovie = (req, res, next) => {
     movieId,
     owner: _id,
   })
-    .then((movie) => res.status(200).send(movie))
+    .then((movie) => res.send(movie))
     .catch((err) => {
       if (err.name === 'ValidationError') {
         next(new BadRequestError(`${Object.values(err.errors).map((error) => error.message).join(', ')}`));
       }
-      return res.status(500).send({ message: 'Ошибка сервера' });
+      next(err);
     });
 };
 
 const getSavedMovies = (req, res, next) => {
   Movie.find({})
     .populate('owner')
-    .then((movies) => res.status(200).send(movies.reverse()))
-    .catch(() => next(new InternalServerError('Ошибка сервера')));
+    .then((movies) => res.send(movies.reverse()))
+    .catch(next);
 };
 
 const deleteMovie = (req, res, next) => {
@@ -57,19 +56,12 @@ const deleteMovie = (req, res, next) => {
     })
     .then((movie) => {
       if (req.user._id === movie.owner.toHexString()) {
-        Movie.deleteOne(movie)
-          .then(() => res.status(200).send({ data: movie }));
-      } else {
-        throw new ForbiddenError('Этот фильм сохранили не вы, его нельзя удалить');
+        return Movie.deleteOne(movie)
+          .then(() => res.send({ data: movie }));
       }
+      throw new ForbiddenError('Этот фильм сохранили не вы, его нельзя удалить');
     })
-    .catch((err) => {
-      if (err.statusCode === 404 || err.statusCode === 403) {
-        next(err);
-      } else {
-        next(new InternalServerError('Ошибка сервера'));
-      }
-    });
+    .catch(next);
 };
 
 module.exports = {

@@ -3,19 +3,9 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const NotFoundError = require('../errors/not-found-error');
 const BadRequestError = require('../errors/bad-request-error');
-const InternalServerError = require('../errors/internal-server-error');
 const UnauthorizedError = require('../errors/unauthorized-error');
 const ConflictError = require('../errors/conflict-error');
-
-const passwordValidator = (obj, password) => {
-  const errorMessages = [];
-
-  Object.keys(obj).forEach((prop) => (
-    obj[prop].regex.test(password) ? false : errorMessages.push(obj[prop].message)
-  ));
-
-  return errorMessages.length > 0 ? `Пароль должен: ${errorMessages}` : true;
-};
+const { CURRENT_JWT_SECRET } = require('../configs');
 
 const createUser = (req, res, next) => {
   const {
@@ -24,29 +14,8 @@ const createUser = (req, res, next) => {
     password,
   } = req.body;
 
-  // const regex = /^(?=.*[0-9])(?=.*[a-z])(?=\S+$).{6, 16}$/;
-  // (?=.*[@#$%^&+=]) - при необходимости можно добавить требование к содержанию символов
-  const requiredPatterns = {
-    one: {
-      regex: /^(?=.*[0-9])/g,
-      message: 'содержать хотя бы одно число',
-    },
-    two: {
-      regex: /^(?=.*[a-zа-яё])/g,
-      message: 'содержать хотя бы одну букву в нижнем регистре',
-    },
-    three: {
-      regex: /^(?=\S+$)/g,
-      message: 'не иметь пробелов',
-    },
-    four: {
-      regex: /^(?=.{3,16}$)/,
-      message: 'содержать от 3 до 16 символов',
-    },
-  };
-  const isPasswordValid = passwordValidator(requiredPatterns, password);
-  if (isPasswordValid !== true) {
-    throw new BadRequestError(isPasswordValid);
+  if (!password) {
+    throw new BadRequestError('Упс! Что-то пошло не так, проверьте корректность введенного пароля');
   } else {
     bcrypt.hash(password, 10)
       .then((hash) => User.create({
@@ -67,42 +36,53 @@ const createUser = (req, res, next) => {
         } else if (err.name === 'MongoError' && err.code === 11000) {
           next(new ConflictError('Данная почта уже зарегистрирована'));
         } else {
-          next(new InternalServerError('Ошибка сервера'));
+          next(err);
         }
       });
   }
 };
 
+function validateEmailAccessibility(email) {
+  return User.findOne({ email })
+    .then((result) => (result === null ? false : result._id));
+}
+
 const changeProfile = (req, res, next) => {
+  const { _id } = req.user;
   const { name, email } = req.body;
-  User.findByIdAndUpdate(req.user._id, { name, email },
-    {
-      new: true,
-      runValidators: true,
-    })
-    .orFail(() => {
-      throw new NotFoundError('Пользователь по заданному id отсутствует в базе');
-    })
-    .then((user) => res.status(200).send(user))
-    .catch((err) => {
-      if (err.name === 'ValidationError' || err.name === 'CastError') {
-        next(new BadRequestError(`${Object.values(err.errors).map((error) => error.message).join(', ')}`));
-      } else if (err.statusCode === 404) {
-        next(err);
+  validateEmailAccessibility(email)
+    .then((userId) => {
+      if (userId === false || userId.toString() === _id.toString()) {
+        User.findByIdAndUpdate(_id, { name, email },
+          {
+            new: true,
+            runValidators: true,
+          })
+          .orFail(() => {
+            throw new NotFoundError('Пользователь по заданному id отсутствует в базе');
+          })
+          .then((user) => res.send(user))
+          .catch((err) => {
+            if (err.name === 'ValidationError' || err.name === 'CastError') {
+              next(new BadRequestError(`${Object.values(err.errors).map((error) => error.message).join(', ')}`));
+            } else {
+              next(err);
+            }
+          });
       } else {
-        next(new InternalServerError('Ошибка сервера'));
+        throw new ConflictError('Данная почта уже зарегистрирована');
       }
-    });
+    })
+    .catch(next);
 };
 
 const login = (req, res, next) => {
   const { email, password } = req.body;
   User.findUserByCredentials(email, password)
     .then((user) => {
-      const { NODE_ENV, JWT_SECRET } = process.env;
       const token = jwt.sign(
         { _id: user._id },
-        NODE_ENV === 'production' ? JWT_SECRET : 'dev-secret',
+        CURRENT_JWT_SECRET,
         { expiresIn: '7d' },
       );
       res.status(200).json({ token });
@@ -113,7 +93,7 @@ const login = (req, res, next) => {
       } else if (!email || !password) {
         next(new BadRequestError('Не передан один из требуемых параметров в body'));
       } else {
-        next(new InternalServerError('Ошибка сервера'));
+        next(err);
       }
     });
 };
@@ -123,14 +103,12 @@ const getUserProfile = (req, res, next) => {
     .orFail(() => {
       throw new NotFoundError('Пользователь по заданному id отсутствует в базе');
     })
-    .then((user) => res.status(200).send({ user }))
+    .then((user) => res.send({ user }))
     .catch((err) => {
       if (err.name === 'CastError') {
         next(new BadRequestError(err.message));
-      } else if (err.statusCode === 404) {
-        next(err);
       } else {
-        next(new InternalServerError('Ошибка сервера'));
+        next(err);
       }
     });
 };

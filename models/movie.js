@@ -10,7 +10,7 @@ const movieSchema = new mongoose.Schema({
     required: true,
   },
   duration: {
-    type: String,
+    type: Number,
     required: true,
   },
   year: {
@@ -51,8 +51,12 @@ const movieSchema = new mongoose.Schema({
     required: true,
   },
   movieId: {
-    type: String,
+    type: Number,
     required: true,
+    validate: {
+      validator: (v) => Number.isInteger(v) && v >= 0,
+      message: 'movieId должно быть целым, положительным, десятичным числом',
+    },
   },
   nameRU: {
     type: String,
