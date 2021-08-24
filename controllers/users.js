@@ -3,7 +3,6 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const NotFoundError = require('../errors/not-found-error');
 const BadRequestError = require('../errors/bad-request-error');
-const UnauthorizedError = require('../errors/unauthorized-error');
 const ConflictError = require('../errors/conflict-error');
 const { CURRENT_JWT_SECRET } = require('../configs');
 
@@ -78,6 +77,9 @@ const changeProfile = (req, res, next) => {
 
 const login = (req, res, next) => {
   const { email, password } = req.body;
+  if (!email || !password) {
+    next(new BadRequestError('Не передан один из требуемых параметров в body'));
+  }
   User.findUserByCredentials(email, password)
     .then((user) => {
       const token = jwt.sign(
@@ -87,15 +89,7 @@ const login = (req, res, next) => {
       );
       res.status(200).json({ token });
     })
-    .catch((err) => {
-      if (err.name === 'AuthorizationError') {
-        next(new UnauthorizedError(err.message));
-      } else if (!email || !password) {
-        next(new BadRequestError('Не передан один из требуемых параметров в body'));
-      } else {
-        next(err);
-      }
-    });
+    .catch(next);
 };
 
 const getUserProfile = (req, res, next) => {
